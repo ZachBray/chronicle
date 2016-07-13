@@ -1,0 +1,9 @@
+[package]
+name = "src"
+version = "0.1.0"
+authors = ["zachbray@googlemail.com"]
+
+[dependencies]
+uuid = "*"
+time = "*"
+itertools = "*"
