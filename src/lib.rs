@@ -1,3 +1,5 @@
+#![feature(plugin)]
+#![feature(clippy)]
 extern crate uuid;
 extern crate time;
 extern crate itertools;
@@ -13,35 +15,35 @@ type LogIndex = u64;
 
 struct LogEntry {
     term: Term,
-    data: [u8]
+    data: [u8],
 }
 
 struct RequestVoteRequest {
-    last_log_term: Term, 
-    last_log_index: LogIndex 
+    last_log_term: Term,
+    last_log_index: LogIndex,
 }
 
 struct RequestVoteReply {
-    granted: bool
+    granted: bool,
 }
 
 struct AppendEntriesRequest<'a> {
     prev_index: LogIndex,
     prev_term: Term,
     entries: &'a [&'a LogEntry],
-    commit_index: LogIndex
+    commit_index: LogIndex,
 }
 
 struct AppendEntriesReply {
     success: bool,
-    match_index: LogIndex
+    match_index: LogIndex,
 }
 
 enum Message<'a> {
     RequestVoteRequest(RequestVoteRequest),
     RequestVoteReply(RequestVoteReply),
     AppendEntriesRequest(AppendEntriesRequest<'a>),
-    AppendEntriesReply(AppendEntriesReply)
+    AppendEntriesReply(AppendEntriesReply),
 }
 
 struct Header {
@@ -52,13 +54,13 @@ struct Header {
 
 struct Envelope<'a> {
     header: Header,
-    message: Message<'a>
+    message: Message<'a>,
 }
 
 enum ServerState {
     Follower,
     Candidate,
-    Leader
+    Leader,
 }
 
 
@@ -72,26 +74,20 @@ trait Model {
 }
 
 struct Alarm {
-    due_time: Duration
+    due_time: Duration,
 }
 
 impl Alarm {
     fn due_now() -> Self {
-        Alarm {
-            due_time: Duration::min_value()
-        }
+        Alarm { due_time: Duration::min_value() }
     }
 
     fn due_never() -> Self {
-        Alarm {
-            due_time: Duration::max_value()
-        }
+        Alarm { due_time: Duration::max_value() }
     }
 
     fn new(due_time: Duration) -> Self {
-        Alarm {
-            due_time: due_time
-        }
+        Alarm { due_time: due_time }
     }
 
     fn is_due(&self, time: Duration) -> bool {
@@ -104,7 +100,7 @@ struct Peer {
     match_index: LogIndex,
     next_index: LogIndex,
     rpc_alarm: Alarm,
-    heartbeat_alarm: Alarm
+    heartbeat_alarm: Alarm,
 }
 
 impl Peer {
@@ -114,7 +110,7 @@ impl Peer {
             match_index: 0,
             next_index: 1,
             rpc_alarm: Alarm::due_now(),
-            heartbeat_alarm: Alarm::due_now()
+            heartbeat_alarm: Alarm::due_now(),
         }
     }
 
@@ -134,12 +130,18 @@ trait Log {
 
     fn term_at(&self, index: LogIndex) -> Term;
     fn length(&self) -> LogIndex;
-    fn entries<'a>(&'a self, from_index_incl: LogIndex, until_index_excl: LogIndex) -> &'a[&'a LogEntry];
+    fn entries<'a>(&'a self,
+                   from_index_incl: LogIndex,
+                   until_index_excl: LogIndex)
+                   -> &'a [&'a LogEntry];
     fn truncate(&mut self, to_index_incl: LogIndex);
     fn append(&mut self, entry: &LogEntry);
 }
 
-struct Server<TLog, TModel> where TLog: Log, TModel: Model {
+struct Server<TLog, TModel>
+    where TLog: Log,
+          TModel: Model
+{
     id: ServerId,
     term: Term,
     commit_index: LogIndex,
@@ -148,10 +150,13 @@ struct Server<TLog, TModel> where TLog: Log, TModel: Model {
     election_alarm: Alarm,
     peers: HashMap<ServerId, Peer>,
     log: TLog,
-    model: TModel
+    model: TModel,
 }
 
-impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
+impl<TLog, TModel> Server<TLog, TModel>
+    where TLog: Log,
+          TModel: Model
+{
     fn new(id: ServerId, peers: &[ServerId], log: TLog, model: TModel) -> Self {
         Server {
             id: id,
@@ -165,12 +170,12 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
             log: log,
             model: model,
             commit_index: 0,
-            election_alarm: Alarm::due_now()
+            election_alarm: Alarm::due_now(),
         }
     }
 
     fn step_down(&mut self, term: u64) {
-        self.term = term; 
+        self.term = term;
         self.state = ServerState::Follower;
         self.voted_for = Option::None;
         if self.election_alarm.is_due(self.model.time()) {
@@ -180,7 +185,8 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
 
     fn start_new_election(&mut self) {
         match self.state {
-            ServerState::Follower | ServerState::Candidate if self.election_alarm.is_due(self.model.time()) => {
+            ServerState::Follower | ServerState::Candidate if self.election_alarm
+                .is_due(self.model.time()) => {
                 self.election_alarm = Alarm::new(self.model.random_election_timeout());
                 self.term += 1;
                 self.voted_for = Option::Some(self.id);
@@ -188,7 +194,7 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
                 for (_, peer) in self.peers.iter_mut() {
                     peer.reset();
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -199,20 +205,21 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
                 match self.peers.get_mut(peer_id) {
                     Option::Some(peer) => {
                         if peer.rpc_alarm.is_due(self.model.time()) {
-                            peer.rpc_alarm = Alarm::new(self.model.time() + self.model.rpc_timeout());
+                            peer.rpc_alarm = Alarm::new(self.model.time() +
+                                                        self.model.rpc_timeout());
                             self.model.send(Envelope {
                                 header: Header {
                                     from: self.id,
                                     to: peer_id.clone(),
-                                    term: self.term
+                                    term: self.term,
                                 },
                                 message: Message::RequestVoteRequest(RequestVoteRequest {
                                     last_log_term: self.log.term(),
-                                    last_log_index: self.log.length()
-                                })
+                                    last_log_index: self.log.length(),
+                                }),
                             });
                         }
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -223,7 +230,8 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
     fn become_leader(&mut self) {
         match self.state {
             ServerState::Candidate => {
-                let votes_for_this_server = self.peers.iter().filter(|&(_, p)| p.vote_granted).count();
+                let votes_for_this_server =
+                    self.peers.iter().filter(|&(_, p)| p.vote_granted).count();
                 let num_servers = self.peers.len();
                 let has_quorum = votes_for_this_server + 1 / (num_servers / 2);
                 self.state = ServerState::Leader;
@@ -233,43 +241,44 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
                     peer.heartbeat_alarm = Alarm::due_now();
                 }
                 self.election_alarm = Alarm::due_never();
-            },
+            }
             _ => {}
         }
     }
 
     fn send_append_entries(&mut self, peer_id: &ServerId) {
         match self.peers.get_mut(peer_id) {
-            Option::Some(peer) =>
+            Option::Some(peer) => {
                 match self.state {
-                    ServerState::Leader if 
-                        peer.heartbeat_alarm.is_due(self.model.time())
-                        || (peer.rpc_alarm.is_due(self.model.time()) && peer.next_index <= self.log.length()) => {
+                    ServerState::Leader if peer.heartbeat_alarm.is_due(self.model.time()) ||
+                                           (peer.rpc_alarm.is_due(self.model.time()) &&
+                                            peer.next_index <= self.log.length()) => {
                         let prev_index = peer.next_index - 1;
-                        let last_index = 
-                            if peer.match_index + 1 < peer.next_index {
-                                prev_index
-                            } else {
-                                std::cmp::min(prev_index + self.model.batch_size(), self.log.length())
-                            };
+                        let last_index = if peer.match_index + 1 < peer.next_index {
+                            prev_index
+                        } else {
+                            std::cmp::min(prev_index + self.model.batch_size(), self.log.length())
+                        };
                         self.model.send(Envelope {
                             header: Header {
                                 from: self.id,
                                 to: peer_id.clone(),
-                                term: self.term
+                                term: self.term,
                             },
                             message: Message::AppendEntriesRequest(AppendEntriesRequest {
                                 prev_index: prev_index,
                                 prev_term: self.log.term_at(prev_index),
                                 entries: self.log.entries(prev_index, last_index),
-                                commit_index: std::cmp::min(self.commit_index, last_index)
-                            })
+                                commit_index: std::cmp::min(self.commit_index, last_index),
+                            }),
                         });
                         peer.rpc_alarm = Alarm::new(self.model.time() + self.model.rpc_timeout());
-                        peer.heartbeat_alarm = Alarm::new(self.model.time() + self.model.max_election_timeout() / 2)
-                    },
+                        peer.heartbeat_alarm = Alarm::new(self.model.time() +
+                                                          self.model.max_election_timeout() / 2)
+                    }
                     _ => {}
-                },
+                }
+            }
             _ => {}
         }
     }
@@ -278,8 +287,9 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
         match self.state {
             ServerState::Leader => {
                 let quorum_size = self.peers.len().clone() / 2;
-                let median_match_index = self.peers.iter()
-                    .map(|(_,peer)| peer.match_index)
+                let median_match_index = self.peers
+                    .iter()
+                    .map(|(_, peer)| peer.match_index)
                     .chain(std::iter::once(self.log.length()))
                     .sorted()
                     .into_iter()
@@ -287,10 +297,10 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
                 match median_match_index {
                     Option::Some(match_index) if self.log.term_at(match_index) == self.term => {
                         self.commit_index = std::cmp::max(self.commit_index, match_index);
-                    },
+                    }
                     _ => {}
                 }
-            },
+            }
             _ => {}
         }
     }
@@ -303,16 +313,15 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
         let this_server_did_not_vote = self.voted_for.is_none();
         let this_server_did_vote_for_them = match self.voted_for { 
             Option::Some(peer_id) if peer_id == header.from => true,
-            _ => false 
+            _ => false, 
         };
         let log_term = self.log.term();
-        let that_server_has_at_least_as_many_entries = 
-            message.last_log_term > log_term || 
+        let that_server_has_at_least_as_many_entries =
+            message.last_log_term > log_term ||
             (message.last_log_term == log_term && message.last_log_index >= self.log.length());
-        let granted =
-            has_same_term && 
-            (this_server_did_not_vote || this_server_did_vote_for_them) &&
-            that_server_has_at_least_as_many_entries;
+        let granted = has_same_term &&
+                      (this_server_did_not_vote || this_server_did_vote_for_them) &&
+                      that_server_has_at_least_as_many_entries;
         if granted {
             self.voted_for = Option::Some(header.from);
             self.election_alarm = Alarm::new(self.model.random_election_timeout());
@@ -321,11 +330,9 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
             header: Header {
                 to: header.from,
                 from: self.id,
-                term: self.term
+                term: self.term,
             },
-            message: Message::RequestVoteReply(RequestVoteReply {
-                granted: granted
-            })
+            message: Message::RequestVoteReply(RequestVoteReply { granted: granted }),
         });
     }
 
@@ -336,13 +343,13 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
                     Option::Some(peer) => {
                         peer.rpc_alarm = Alarm::due_never();
                         peer.vote_granted = message.granted;
-                    },
+                    }
                     _ => {}
                 }
-            },
+            }
             _ if self.term < header.term => {
                 self.step_down(header.term);
-            },
+            }
             _ => {}
         }
     }
@@ -355,8 +362,8 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
             t if t == self.term => {
                 self.state = ServerState::Follower;
                 self.election_alarm = Alarm::new(self.model.random_election_timeout());
-                if message.prev_index == 0 || (
-                    message.prev_index <= self.log.length() && 
+                if message.prev_index == 0 ||
+                   (message.prev_index <= self.log.length() &&
                     self.log.term_at(message.prev_index) == message.prev_term) {
                     success = true;
                     match_index = message.prev_index;
@@ -369,19 +376,19 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
                     }
                     self.commit_index = std::cmp::max(self.commit_index, message.commit_index);
                 }
-            },
+            }
             _ => {}
         }
         self.model.send(Envelope {
             header: Header {
                 from: self.id,
                 to: header.from,
-                term: self.term
+                term: self.term,
             },
             message: Message::AppendEntriesReply(AppendEntriesReply {
                 success: success,
-                match_index: match_index
-            })
+                match_index: match_index,
+            }),
         });
     }
 
@@ -397,23 +404,31 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
                             peer.next_index = std::cmp::max(1, peer.next_index - 1);
                         }
                         peer.rpc_alarm = Alarm::due_now();
-                    },
+                    }
                     _ => {}
                 }
-            },
+            }
             _ if self.term < header.term => {
                 self.step_down(header.term);
-            },
+            }
             _ => {}
         }
     }
 
     fn handle_message(&mut self, envelope: &Envelope) {
         match envelope.message {
-            Message::RequestVoteRequest(ref message) => self.handle_request_vote_request(&envelope.header, message),
-            Message::RequestVoteReply(ref message) => self.handle_request_vote_reply(&envelope.header, message),
-            Message::AppendEntriesRequest(ref message) => self.handle_append_entries_request(&envelope.header, message),
-            Message::AppendEntriesReply(ref message) => self.handle_append_entries_reply(&envelope.header, message)
+            Message::RequestVoteRequest(ref message) => {
+                self.handle_request_vote_request(&envelope.header, message)
+            }
+            Message::RequestVoteReply(ref message) => {
+                self.handle_request_vote_reply(&envelope.header, message)
+            }
+            Message::AppendEntriesRequest(ref message) => {
+                self.handle_append_entries_request(&envelope.header, message)
+            }
+            Message::AppendEntriesReply(ref message) => {
+                self.handle_append_entries_reply(&envelope.header, message)
+            }
         }
     }
 }
@@ -421,6 +436,5 @@ impl <TLog, TModel> Server<TLog, TModel> where TLog: Log, TModel: Model {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn it_works() {
-    }
+    fn it_works() {}
 }

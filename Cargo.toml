@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["zachbray@googlemail.com"]
 
 [dependencies]
+clippy = "*"
 uuid = "*"
 time = "*"
 itertools = "*"
