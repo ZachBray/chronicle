@@ -12,15 +12,14 @@ use super::network::Network;
 use super::messages::{Envelope, Header, Message, RequestVoteRequest, RequestVoteReply,
                       AppendEntriesRequest, AppendEntriesReply, LogEntry};
 
+trait Model {
+    fn time(&self) -> Duration;
+}
+
 enum ServerState {
     Follower,
     Candidate,
     Leader,
-}
-
-trait Model {
-    fn time(&self) -> Duration;
-    fn random_election_timeout(&mut self) -> Duration;
 }
 
 struct Peer {
@@ -99,13 +98,18 @@ impl<L, N, M> Server<L, N, M>
         }
     }
 
+    fn set_random_election_alarm(&mut self) {
+        self.election_alarm = Alarm::due_between(self.model.time(),
+                                                 self.model.time() +
+                                                 self.config.max_election_timeout);
+    }
+
     fn step_down(&mut self, term: u64) {
         self.term = term;
         self.state = ServerState::Follower;
         self.voted_for = Option::None;
         if self.election_alarm.is_due(self.model.time()) {
-            self.election_alarm = Alarm::new(self.model.time() +
-                                             self.model.random_election_timeout());
+            self.set_random_election_alarm();
         }
     }
 
@@ -113,8 +117,7 @@ impl<L, N, M> Server<L, N, M>
         match self.state {
             ServerState::Follower | ServerState::Candidate if self.election_alarm
                 .is_due(self.model.time()) => {
-                self.election_alarm = Alarm::new(self.model.time() +
-                                                 self.model.random_election_timeout());
+                self.set_random_election_alarm();
                 self.term += 1;
                 self.voted_for = Option::Some(self.id);
                 self.state = ServerState::Candidate;
@@ -251,8 +254,7 @@ impl<L, N, M> Server<L, N, M>
                       that_server_has_at_least_as_many_entries;
         if granted {
             self.voted_for = Option::Some(header.from);
-            self.election_alarm = Alarm::new(self.model.time() +
-                                             self.model.random_election_timeout());
+            self.set_random_election_alarm();
         }
         self.network.send(Envelope {
             header: Header {
@@ -289,8 +291,7 @@ impl<L, N, M> Server<L, N, M>
             t if t > self.term => self.step_down(t),
             t if t == self.term => {
                 self.state = ServerState::Follower;
-                self.election_alarm = Alarm::new(self.model.time() +
-                                                 self.model.random_election_timeout());
+                self.set_random_election_alarm();
                 if message.prev_index == 0 ||
                    (message.prev_index <= self.log.length() &&
                     self.log.term_at(message.prev_index) == message.prev_term) {
