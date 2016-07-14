@@ -5,7 +5,6 @@ authors = ["zachbray@googlemail.com"]
 
 [dependencies]
 clippy = "*"
-uuid = "*"
 time = "*"
 itertools = "*"
 rand = "*"
