@@ -99,109 +99,94 @@ impl<'a, L, N> Node<'a, L, N>
     }
 
     fn start_new_election(&mut self) {
-        match self.state {
-            NodeState::Follower | NodeState::Candidate if self.election_alarm
-                .is_due(self.time) => {
-                self.set_random_election_alarm();
-                self.term += 1;
-                self.voted_for = Option::Some(self.config.node_id);
-                self.state = NodeState::Candidate;
-                for (_, peer) in &mut self.peers {
-                    peer.reset();
-                }
+        if self.election_alarm.is_due(self.time) {
+            self.set_random_election_alarm();
+            self.term += 1;
+            self.voted_for = Option::Some(self.config.node_id);
+            self.state = NodeState::Candidate;
+            for (_, peer) in &mut self.peers {
+                peer.reset();
             }
-            _ => {}
         }
     }
 
     fn send_request_vote(&mut self, peer_id: &NodeId) {
-        if let NodeState::Candidate = self.state {
-            if let Option::Some(peer) = self.peers.get_mut(peer_id) {
-                if peer.rpc_alarm.is_due(self.time) {
-                    peer.rpc_alarm = Alarm::new(self.time + self.config.rpc_timeout);
-                    self.network.send(Envelope {
-                        header: Header {
-                            from: self.config.node_id,
-                            to: *peer_id,
-                            term: self.term,
-                        },
-                        message: Message::RequestVoteRequest(RequestVoteRequest {
-                            last_log_term: self.log.term(),
-                            last_log_index: self.log.length(),
-                        }),
-                    });
-                }
+        if let Option::Some(peer) = self.peers.get_mut(peer_id) {
+            if peer.rpc_alarm.is_due(self.time) {
+                peer.rpc_alarm = Alarm::new(self.time + self.config.rpc_timeout);
+                self.network.send(Envelope {
+                    header: Header {
+                        from: self.config.node_id,
+                        to: *peer_id,
+                        term: self.term,
+                    },
+                    message: Message::RequestVoteRequest(RequestVoteRequest {
+                        last_log_term: self.log.term(),
+                        last_log_index: self.log.length(),
+                    }),
+                });
             }
         }
     }
 
     fn become_leader(&mut self) {
-        if let NodeState::Candidate = self.state {
-            let votes_for_this_server = self.peers.iter().filter(|&(_, p)| p.vote_granted).count();
-            let num_servers = self.peers.len();
-            let has_quorum = votes_for_this_server + 1 > (num_servers / 2);
-            if has_quorum {
-                self.state = NodeState::Leader;
-                for (_, peer) in &mut self.peers {
-                    peer.next_index = self.log.length() + 1;
-                    peer.rpc_alarm = Alarm::due_never();
-                    peer.heartbeat_alarm = Alarm::due_now();
-                }
-                self.election_alarm = Alarm::due_never();
+        let votes_for_this_server = self.peers.iter().filter(|&(_, p)| p.vote_granted).count();
+        let num_servers = self.peers.len();
+        let has_quorum = votes_for_this_server + 1 > (num_servers / 2);
+        if has_quorum {
+            self.state = NodeState::Leader;
+            for (_, peer) in &mut self.peers {
+                peer.next_index = self.log.length() + 1;
+                peer.rpc_alarm = Alarm::due_never();
+                peer.heartbeat_alarm = Alarm::due_now();
             }
+            self.election_alarm = Alarm::due_never();
         }
     }
 
     fn send_append_entries(&mut self, peer_id: &NodeId) {
         if let Option::Some(peer) = self.peers.get_mut(peer_id) {
-            match self.state {
-                NodeState::Leader if peer.heartbeat_alarm.is_due(self.time) ||
-                                     (peer.rpc_alarm.is_due(self.time) &&
-                                      peer.next_index <= self.log.length()) => {
-                    let prev_index = peer.next_index - 1;
-                    let last_index = if peer.match_index + 1 < peer.next_index {
-                        prev_index
-                    } else {
-                        std::cmp::min(prev_index + self.config.batch_size, self.log.length())
-                    };
-                    self.network.send(Envelope {
-                        header: Header {
-                            from: self.config.node_id,
-                            to: *peer_id,
-                            term: self.term,
-                        },
-                        message: Message::AppendEntriesRequest(AppendEntriesRequest {
-                            prev_index: prev_index,
-                            prev_term: self.log.term_at(prev_index),
-                            entries: self.log.entries(prev_index, last_index),
-                            commit_index: std::cmp::min(self.commit_index, last_index),
-                        }),
-                    });
-                    peer.rpc_alarm = Alarm::new(self.time + self.config.rpc_timeout);
-                    peer.heartbeat_alarm = Alarm::new(self.time +
-                                                      self.config.max_election_timeout / 2)
-                }
-                _ => {}
+            if peer.heartbeat_alarm.is_due(self.time) ||
+               (peer.rpc_alarm.is_due(self.time) && peer.next_index <= self.log.length()) {
+                let prev_index = peer.next_index - 1;
+                let last_index = if peer.match_index + 1 < peer.next_index {
+                    prev_index
+                } else {
+                    std::cmp::min(prev_index + self.config.batch_size, self.log.length())
+                };
+                self.network.send(Envelope {
+                    header: Header {
+                        from: self.config.node_id,
+                        to: *peer_id,
+                        term: self.term,
+                    },
+                    message: Message::AppendEntriesRequest(AppendEntriesRequest {
+                        prev_index: prev_index,
+                        prev_term: self.log.term_at(prev_index),
+                        entries: self.log.entries(prev_index, last_index),
+                        commit_index: std::cmp::min(self.commit_index, last_index),
+                    }),
+                });
+                peer.rpc_alarm = Alarm::new(self.time + self.config.rpc_timeout);
+                peer.heartbeat_alarm = Alarm::new(self.time + self.config.max_election_timeout / 2)
             }
         }
     }
 
     fn advance_commit_index(&mut self) {
-        if let NodeState::Leader = self.state {
-            let quorum_size = self.peers.len() / 2;
-            let median_match_index = self.peers
-                .iter()
-                .map(|(_, peer)| peer.match_index)
-                .chain(std::iter::once(self.log.length()))
-                .sorted()
-                .into_iter()
-                .nth(quorum_size);
-            match median_match_index {
-                Option::Some(match_index) if self.log.term_at(match_index) == self.term => {
-                    self.commit_index = std::cmp::max(self.commit_index, match_index);
-                }
-                _ => {}
+        let quorum_size = self.peers.len() / 2;
+        let median_match_index = self.peers
+            .iter()
+            .map(|(_, peer)| peer.match_index)
+            .chain(std::iter::once(self.log.length()))
+            .sorted()
+            .into_iter()
+            .nth(quorum_size);
+        match median_match_index {
+            Option::Some(match_index) if self.log.term_at(match_index) == self.term => {
+                self.commit_index = std::cmp::max(self.commit_index, match_index);
             }
+            _ => {}
         }
     }
 
@@ -309,7 +294,7 @@ impl<'a, L, N> Node<'a, L, N>
         }
     }
 
-    fn handle_message(&mut self, envelope: &Envelope) {
+    pub fn handle_message(&mut self, envelope: &Envelope) {
         match envelope.message {
             Message::RequestVoteRequest(ref message) => {
                 self.handle_request_vote_request(&envelope.header, message)
@@ -326,17 +311,25 @@ impl<'a, L, N> Node<'a, L, N>
         }
     }
 
-    pub fn run(&mut self, time: Duration, message: Option<&Envelope>) {
+    pub fn run(&mut self, time: Duration) {
         self.time = time;
-        self.start_new_election();
-        self.become_leader();
-        self.advance_commit_index();
-        for m in message {
-            self.handle_message(m);
-        }
-        for peer_id in self.config.peer_ids {
-            self.send_request_vote(peer_id);
-            self.send_append_entries(peer_id);
+        match self.state {
+            NodeState::Follower => {
+                self.start_new_election();
+            }
+            NodeState::Candidate => {
+                self.start_new_election();
+                self.become_leader();
+                for peer_id in self.config.peer_ids {
+                    self.send_request_vote(peer_id);
+                }
+            }
+            NodeState::Leader => {
+                self.advance_commit_index();
+                for peer_id in self.config.peer_ids {
+                    self.send_append_entries(peer_id);
+                }
+            }
         }
     }
 }
