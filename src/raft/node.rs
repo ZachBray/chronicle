@@ -142,7 +142,7 @@ impl<'a, L, N> Node<'a, L, N>
             let has_quorum = votes_for_this_server + 1 > (num_servers / 2);
             if has_quorum {
                 self.state = NodeState::Leader;
-                for (_, peer) in self.peers.iter_mut() {
+                for (_, peer) in &mut self.peers {
                     peer.next_index = self.log.length() + 1;
                     peer.rpc_alarm = Alarm::due_never();
                     peer.heartbeat_alarm = Alarm::due_now();
@@ -153,61 +153,55 @@ impl<'a, L, N> Node<'a, L, N>
     }
 
     fn send_append_entries(&mut self, peer_id: &NodeId) {
-        match self.peers.get_mut(peer_id) {
-            Option::Some(peer) => {
-                match self.state {
-                    NodeState::Leader if peer.heartbeat_alarm.is_due(self.time) ||
-                                         (peer.rpc_alarm.is_due(self.time) &&
-                                          peer.next_index <= self.log.length()) => {
-                        let prev_index = peer.next_index - 1;
-                        let last_index = if peer.match_index + 1 < peer.next_index {
-                            prev_index
-                        } else {
-                            std::cmp::min(prev_index + self.config.batch_size, self.log.length())
-                        };
-                        self.network.send(Envelope {
-                            header: Header {
-                                from: self.config.node_id,
-                                to: peer_id.clone(),
-                                term: self.term,
-                            },
-                            message: Message::AppendEntriesRequest(AppendEntriesRequest {
-                                prev_index: prev_index,
-                                prev_term: self.log.term_at(prev_index),
-                                entries: self.log.entries(prev_index, last_index),
-                                commit_index: std::cmp::min(self.commit_index, last_index),
-                            }),
-                        });
-                        peer.rpc_alarm = Alarm::new(self.time + self.config.rpc_timeout);
-                        peer.heartbeat_alarm = Alarm::new(self.time +
-                                                          self.config.max_election_timeout / 2)
-                    }
-                    _ => {}
+        if let Option::Some(peer) = self.peers.get_mut(peer_id) {
+            match self.state {
+                NodeState::Leader if peer.heartbeat_alarm.is_due(self.time) ||
+                                     (peer.rpc_alarm.is_due(self.time) &&
+                                      peer.next_index <= self.log.length()) => {
+                    let prev_index = peer.next_index - 1;
+                    let last_index = if peer.match_index + 1 < peer.next_index {
+                        prev_index
+                    } else {
+                        std::cmp::min(prev_index + self.config.batch_size, self.log.length())
+                    };
+                    self.network.send(Envelope {
+                        header: Header {
+                            from: self.config.node_id,
+                            to: *peer_id,
+                            term: self.term,
+                        },
+                        message: Message::AppendEntriesRequest(AppendEntriesRequest {
+                            prev_index: prev_index,
+                            prev_term: self.log.term_at(prev_index),
+                            entries: self.log.entries(prev_index, last_index),
+                            commit_index: std::cmp::min(self.commit_index, last_index),
+                        }),
+                    });
+                    peer.rpc_alarm = Alarm::new(self.time + self.config.rpc_timeout);
+                    peer.heartbeat_alarm = Alarm::new(self.time +
+                                                      self.config.max_election_timeout / 2)
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 
     fn advance_commit_index(&mut self) {
-        match self.state {
-            NodeState::Leader => {
-                let quorum_size = self.peers.len().clone() / 2;
-                let median_match_index = self.peers
-                    .iter()
-                    .map(|(_, peer)| peer.match_index)
-                    .chain(std::iter::once(self.log.length()))
-                    .sorted()
-                    .into_iter()
-                    .nth(quorum_size);
-                match median_match_index {
-                    Option::Some(match_index) if self.log.term_at(match_index) == self.term => {
-                        self.commit_index = std::cmp::max(self.commit_index, match_index);
-                    }
-                    _ => {}
+        if let NodeState::Leader = self.state {
+            let quorum_size = self.peers.len() / 2;
+            let median_match_index = self.peers
+                .iter()
+                .map(|(_, peer)| peer.match_index)
+                .chain(std::iter::once(self.log.length()))
+                .sorted()
+                .into_iter()
+                .nth(quorum_size);
+            match median_match_index {
+                Option::Some(match_index) if self.log.term_at(match_index) == self.term => {
+                    self.commit_index = std::cmp::max(self.commit_index, match_index);
                 }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -245,12 +239,9 @@ impl<'a, L, N> Node<'a, L, N>
     fn handle_request_vote_reply(&mut self, header: &Header, message: &RequestVoteReply) {
         match self.state {
             NodeState::Candidate if self.term == header.term => {
-                match self.peers.get_mut(&header.from) {
-                    Option::Some(peer) => {
-                        peer.rpc_alarm = Alarm::due_never();
-                        peer.vote_granted = message.granted;
-                    }
-                    _ => {}
+                if let Option::Some(peer) = self.peers.get_mut(&header.from) {
+                    peer.rpc_alarm = Alarm::due_never();
+                    peer.vote_granted = message.granted;
                 }
             }
             _ if self.term < header.term => {
@@ -301,17 +292,14 @@ impl<'a, L, N> Node<'a, L, N>
     fn handle_append_entries_reply(&mut self, header: &Header, message: &AppendEntriesReply) {
         match self.state {
             NodeState::Leader if self.term == header.term => {
-                match self.peers.get_mut(&header.from) {
-                    Option::Some(peer) => {
-                        if message.success {
-                            peer.match_index = std::cmp::max(peer.match_index, message.match_index);
-                            peer.next_index = peer.match_index + 1;
-                        } else {
-                            peer.next_index = std::cmp::max(1, peer.next_index - 1);
-                        }
-                        peer.rpc_alarm = Alarm::due_now();
+                if let Option::Some(peer) = self.peers.get_mut(&header.from) {
+                    if message.success {
+                        peer.match_index = std::cmp::max(peer.match_index, message.match_index);
+                        peer.next_index = peer.match_index + 1;
+                    } else {
+                        peer.next_index = std::cmp::max(1, peer.next_index - 1);
                     }
-                    _ => {}
+                    peer.rpc_alarm = Alarm::due_now();
                 }
             }
             _ if self.term < header.term => {
