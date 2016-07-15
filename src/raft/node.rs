@@ -334,12 +334,9 @@ impl<'a, L, N> Node<'a, L, N>
         for m in message {
             self.handle_message(m);
         }
-        // TODO: Avoid creating a vector here if possible. E.g., move the peer list outside of the
-        // main state.
-        let peers: Vec<NodeId> = self.peers.iter().map(|(peer_id, _)| peer_id.clone()).collect();
-        for peer_id in peers {
-            self.send_request_vote(&peer_id);
-            self.send_append_entries(&peer_id);
+        for peer_id in self.config.peer_ids {
+            self.send_request_vote(peer_id);
+            self.send_append_entries(peer_id);
         }
     }
 }
