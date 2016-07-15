@@ -1,4 +1,4 @@
-use super::measures::{ServerId, Term, LogIndex};
+use super::measures::{NodeId, Term, LogIndex};
 
 pub struct LogEntry {
     pub term: Term,
@@ -34,8 +34,8 @@ pub enum Message<'a> {
 }
 
 pub struct Header {
-    pub from: ServerId,
-    pub to: ServerId,
+    pub from: NodeId,
+    pub to: NodeId,
     pub term: Term,
 }
 

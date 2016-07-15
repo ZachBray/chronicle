@@ -8,10 +8,7 @@ pub trait Log {
 
     fn term_at(&self, index: LogIndex) -> Term;
     fn length(&self) -> LogIndex;
-    fn entries<'a>(&'a self,
-                   from_index_incl: LogIndex,
-                   until_index_excl: LogIndex)
-                   -> &'a [&'a LogEntry];
+    fn entries(&self, from_index_incl: LogIndex, until_index_excl: LogIndex) -> &[&LogEntry];
     fn truncate(&mut self, to_index_incl: LogIndex);
     fn append(&mut self, entry: &LogEntry);
 }

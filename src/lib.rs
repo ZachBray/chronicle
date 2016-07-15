@@ -1,5 +1,5 @@
 #![feature(plugin)]
-#![feature(clippy)]
+#![plugin(clippy)]
 extern crate time;
 extern crate itertools;
 extern crate rand;
